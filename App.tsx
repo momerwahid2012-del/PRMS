@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import RoomManagement from './pages/RoomManagement';
@@ -9,7 +9,7 @@ import Login from './pages/Login';
 import Feedback from './pages/Feedback';
 import NotificationToast from './components/NotificationToast';
 import { db } from './services/storage';
-import { User, ActivityLog, Notification, Room } from './types';
+import { User, Notification } from './types';
 import { CURRENCY } from './constants';
 
 const App: React.FC = () => {
@@ -20,10 +20,33 @@ const App: React.FC = () => {
   const [paymentForm, setPaymentForm] = useState({ roomId: '', amount: '' });
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const session = db.getCurrentUser();
-    if (session) setUser(session);
+  // Memoized refresh to prevent unnecessary re-renders
+  const refreshUserData = useCallback(() => {
+    const updatedUser = db.getCurrentUser();
+    setUser(updatedUser);
   }, []);
+
+  useEffect(() => {
+    refreshUserData();
+
+    // Listen for local database updates
+    const handleDbUpdate = (e: any) => {
+      refreshUserData();
+    };
+
+    // Listen for cross-tab storage changes
+    const handleStorageChange = (e: StorageEvent) => {
+      refreshUserData();
+    };
+
+    window.addEventListener(db.UPDATE_EVENT as any, handleDbUpdate);
+    window.addEventListener('storage', handleStorageChange);
+    
+    return () => {
+      window.removeEventListener(db.UPDATE_EVENT as any, handleDbUpdate);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [refreshUserData]);
 
   const handleLoginSuccess = () => {
     setUser(db.getCurrentUser());
@@ -62,10 +85,11 @@ const App: React.FC = () => {
       if (!paymentForm.roomId) throw new Error("Error 422: Select a valid room unit");
 
       db.addPayment({ roomId: paymentForm.roomId, amount, status: 'Paid' });
-      triggerNotification(`Successfully verified: Payment of ${amount} recorded`);
+      triggerNotification(`Successfully verified: Payment recorded`);
       setShowPaymentModal(false);
       setPaymentForm({ roomId: '', amount: '' });
-      setUser(db.getCurrentUser());
+      // Explicitly refresh after action
+      refreshUserData();
     } catch (e: any) {
       setPaymentError(e.message);
       triggerNotification(e.message, "warning");
@@ -87,7 +111,7 @@ const App: React.FC = () => {
       case 'reports':
         return <Reports />;
       case 'feedback':
-        return <Feedback onAction={triggerNotification} />;
+        return <Feedback />;
       case 'logs':
         return (
           <div className="space-y-6">
@@ -122,7 +146,7 @@ const App: React.FC = () => {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <h1 className="text-2xl font-bold text-slate-800">Payments Ledger</h1>
               {(user.permissions.canAddPayments || user.role === 'ADMIN') && (
-                <button onClick={() => { setPaymentError(null); setPaymentForm({ roomId: '', amount: '' }); setShowPaymentModal(true); onAction("Success: Opened payment recorder"); }} className="bg-[#049669] text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-xl shadow-emerald-900/10 hover:bg-[#057a55] transition-all active:scale-95">Record New Payment</button>
+                <button onClick={() => { setPaymentError(null); setPaymentForm({ roomId: '', amount: '' }); setShowPaymentModal(true); }} className="bg-[#049669] text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-xl shadow-emerald-900/10 hover:bg-[#057a55] transition-all active:scale-95">Record New Payment</button>
               )}
             </div>
             
@@ -159,8 +183,6 @@ const App: React.FC = () => {
     }
   };
 
-  const onAction = (msg: string, type?: 'success' | 'warning' | 'info') => triggerNotification(msg, type);
-
   return (
     <div className="relative">
       <NotificationToast notification={notification} onClose={() => setNotification(null)} />
@@ -170,7 +192,7 @@ const App: React.FC = () => {
           <div className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl animate-in zoom-in duration-200">
             <div className="flex justify-between items-center mb-8">
               <h2 className="text-2xl font-black text-slate-800 tracking-tight">Record Transaction</h2>
-              <button onClick={() => { setShowPaymentModal(false); onAction("Success: Discarded payment"); }} className="text-slate-400 hover:text-slate-600 transition-colors">
+              <button onClick={() => setShowPaymentModal(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
                 <i className="fas fa-times text-xl"></i>
               </button>
             </div>
@@ -208,10 +230,9 @@ const App: React.FC = () => {
                   />
                   {paymentError && <p className="text-rose-500 text-[10px] font-black uppercase mt-2 pl-1">{paymentError}</p>}
                 </div>
-                <p className="text-[10px] text-slate-400 mt-4 italic">Note: Max collection is capped at 9,999 per entry.</p>
               </div>
               <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => { setShowPaymentModal(false); onAction("Success: Discarded payment entry"); }} className="flex-1 border border-slate-200 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all">Discard</button>
+                <button type="button" onClick={() => setShowPaymentModal(false)} className="flex-1 border border-slate-200 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all">Discard</button>
                 <button type="submit" className="flex-1 bg-[#049669] text-white py-4 rounded-2xl font-bold hover:bg-[#057a55] shadow-xl shadow-emerald-900/20 active:scale-95 transition-all">Submit Payment</button>
               </div>
             </form>

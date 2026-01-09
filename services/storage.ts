@@ -12,6 +12,8 @@ const STORAGE_KEYS = {
   SETTINGS: 'rms_settings'
 };
 
+const DB_UPDATE_EVENT = 'rms-db-update';
+
 const INITIAL_USERS: User[] = [
   { 
     id: '1', 
@@ -38,16 +40,22 @@ const _get = <T,>(key: string, initial: T): T => {
 
 const _save = <T,>(key: string, data: T): void => {
   localStorage.setItem(key, JSON.stringify(data));
+  // Dispatch a local event for internal component sync
+  window.dispatchEvent(new CustomEvent(DB_UPDATE_EVENT, { detail: { key } }));
 };
 
 export const db = {
   get: _get,
   save: _save,
   
+  // Expose the update event name
+  UPDATE_EVENT: DB_UPDATE_EVENT,
+
   getCurrentUser(): User | null {
     const session = _get<User | null>(STORAGE_KEYS.SESSION, null);
     if (!session) return null;
     const users = _get<User[]>(STORAGE_KEYS.USERS, INITIAL_USERS);
+    // Always find fresh user data by ID from the main list to get current coins/stats
     const user = users.find(u => u.id === session.id);
     return user ? { ...user } : null;
   },
@@ -65,6 +73,7 @@ export const db = {
 
   logout() {
     localStorage.removeItem(STORAGE_KEYS.SESSION);
+    window.dispatchEvent(new CustomEvent(DB_UPDATE_EVENT, { detail: { key: STORAGE_KEYS.SESSION } }));
   },
 
   getSettings() {
@@ -193,11 +202,11 @@ export const db = {
     payments.push(newPayment);
     _save(STORAGE_KEYS.PAYMENTS, payments);
 
-    // Update Employee Coins & Collection Stats
+    // Update Employee master record
     const users = _get<User[]>(STORAGE_KEYS.USERS, INITIAL_USERS);
     const empIdx = users.findIndex(u => u.id === currentUser.id);
     if (empIdx !== -1) {
-      const emp = users[empIdx];
+      const emp = { ...users[empIdx] };
       const todayStr = new Date().toISOString().split('T')[0];
       
       if (emp.lastCollectionDate !== todayStr) {
@@ -208,14 +217,12 @@ export const db = {
       emp.totalCollected += paymentData.amount;
       emp.dailyCollected += paymentData.amount;
       
-      let calculatedCoins = emp.coins;
       if (emp.dailyTarget > 0 && emp.dailyCollected >= emp.dailyTarget) {
-         calculatedCoins += 5;
+         emp.coins += 5;
       } else if (emp.dailyTarget > 0 && emp.dailyCollected < emp.dailyTarget) {
-         calculatedCoins -= 1;
+         emp.coins = Math.max(0, emp.coins - 1);
       }
 
-      emp.coins = calculatedCoins;
       users[empIdx] = emp;
       _save(STORAGE_KEYS.USERS, users);
     }

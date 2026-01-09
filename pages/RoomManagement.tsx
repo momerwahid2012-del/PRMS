@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../services/storage';
 import { Room, RoomStatus, RoomType, UserRole } from '../types';
 import { COLORS, ROOM_TYPES, ROOM_STATUSES, CURRENCY } from '../constants';
@@ -39,9 +39,16 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
   const canMove = isAdmin || user?.permissions.canMoveTenants;
   const canPay = isAdmin || user?.permissions.canAddPayments;
 
-  useEffect(() => {
+  const refreshRooms = useCallback(() => {
     setRooms(db.getRooms());
   }, []);
+
+  useEffect(() => {
+    refreshRooms();
+    const handleDbUpdate = () => refreshRooms();
+    window.addEventListener(db.UPDATE_EVENT as any, handleDbUpdate);
+    return () => window.removeEventListener(db.UPDATE_EVENT as any, handleDbUpdate);
+  }, [refreshRooms]);
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -82,13 +89,12 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
     try {
       if (editingRoom) {
         db.updateRoom(editingRoom.id, formData);
-        onAction(`Success: Unit ${formData.roomNumber} updated`);
+        onAction(`Success: Unit updated`);
       } else {
         db.addRoom(formData as any);
-        onAction(`Success: Unit ${formData.roomNumber} registered`);
+        onAction(`Success: Unit registered`);
       }
       setShowModal(false);
-      setRooms(db.getRooms());
     } catch (err: any) {
       setErrorMsg(`Error 500: ${err.message}`);
       onAction(`Error 500: ${err.message}`, "warning");
@@ -100,10 +106,9 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
     if (selectedIds.length === 0) return;
     try {
       db.bulkUpdateRooms(selectedIds, bulkFormData);
-      onAction(`Success: ${selectedIds.length} units updated in bulk`);
+      onAction(`Success: Bulk update complete`);
       setShowBulkModal(false);
       setSelectedIds([]);
-      setRooms(db.getRooms());
     } catch (err) {
       onAction("Error 500: Bulk update failed", "warning");
     }
@@ -129,7 +134,7 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
             </button>
           )}
           {isAdmin && (
-            <button onClick={() => { setEditingRoom(null); setFormData({ roomNumber: '', type: RoomType.SINGLE, status: RoomStatus.AVAILABLE, floor: '', building: '', monthlyRent: 0, monthlyExpenses: 0, targetCollection: 0, minCollection: 0, isOpenEnded: false }); setShowModal(true); setErrorMsg(null); onAction("Success: Initialized unit creator"); }} className="flex-1 sm:flex-none bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg">
+            <button onClick={() => { setEditingRoom(null); setFormData({ roomNumber: '', type: RoomType.SINGLE, status: RoomStatus.AVAILABLE, floor: '', building: '', monthlyRent: 0, monthlyExpenses: 0, targetCollection: 0, minCollection: 0, isOpenEnded: false }); setShowModal(true); setErrorMsg(null); }} className="flex-1 sm:flex-none bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg">
               Add Room
             </button>
           )}
@@ -174,8 +179,8 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
                     )}
                     <td className="px-6 py-5 text-right">
                       <div className="flex justify-end gap-1">
-                        {canPay && room.status === RoomStatus.OCCUPIED && <button onClick={() => { onOpenPaymentModal(room.id); onAction(`Success: Opened ledger for ${room.roomNumber}`); }} className="text-[#049669] p-2 hover:bg-emerald-50 rounded-lg"><i className="fas fa-money-bill-1-wave"></i></button>}
-                        {canMove && <button onClick={() => { setEditingRoom(room); setFormData(room); setShowModal(true); setErrorMsg(null); onAction(`Success: Editing ${room.roomNumber}`); }} className="text-slate-400 p-2 hover:bg-indigo-50 rounded-lg"><i className="fas fa-edit"></i></button>}
+                        {canPay && room.status === RoomStatus.OCCUPIED && <button onClick={() => onOpenPaymentModal(room.id)} className="text-[#049669] p-2 hover:bg-emerald-50 rounded-lg"><i className="fas fa-money-bill-1-wave"></i></button>}
+                        {canMove && <button onClick={() => { setEditingRoom(room); setFormData(room); setShowModal(true); setErrorMsg(null); }} className="text-slate-400 p-2 hover:bg-indigo-50 rounded-lg"><i className="fas fa-edit"></i></button>}
                       </div>
                     </td>
                   </tr>
@@ -191,7 +196,7 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
           <div className="bg-white rounded-[2rem] w-full max-w-xl p-10 shadow-2xl animate-in zoom-in duration-200 my-8">
             <div className="flex justify-between items-center mb-8">
                <h3 className="text-3xl font-bold text-slate-800 tracking-tight">Unit Configuration</h3>
-               <button onClick={() => { setShowModal(false); onAction("Success: Form closed"); }} className="text-slate-400 hover:text-slate-600"><i className="fas fa-times text-2xl"></i></button>
+               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><i className="fas fa-times text-2xl"></i></button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-2 gap-6">
@@ -216,19 +221,6 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
                     {ROOM_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
-              </div>
-
-              <div className="bg-[#0f172a] rounded-2xl p-6 text-white shadow-xl flex justify-between items-center overflow-hidden relative">
-                 <div className="relative z-10">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-2">Financial Projection</p>
-                    <p className={`text-4xl font-black ${getProjection(formData) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {getProjection(formData) >= 0 ? '+' : ''}{CURRENCY} {getProjection(formData).toLocaleString()}
-                    </p>
-                 </div>
-                 <div className="text-right text-[10px] font-black text-slate-500 uppercase tracking-widest leading-loose relative z-10">
-                    <p>Rent: +{formData.monthlyRent || 0}</p>
-                    <p>Exp: -{formData.monthlyExpenses || 0}</p>
-                 </div>
               </div>
 
               {isAdmin && (
@@ -259,7 +251,7 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
               {errorMsg && <div className="p-4 bg-rose-50 border border-rose-100 text-rose-700 text-[10px] font-black uppercase rounded-2xl">{errorMsg}</div>}
 
               <div className="flex gap-4 pt-6">
-                <button type="button" onClick={() => { setShowModal(false); onAction("Success: Cancelled unit changes"); }} className="flex-1 border py-4 rounded-2xl font-bold text-slate-500">Cancel</button>
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 border py-4 rounded-2xl font-bold text-slate-500">Cancel</button>
                 <button type="submit" className="flex-1 bg-indigo-600 text-white py-4 rounded-2xl font-bold">Save Room</button>
               </div>
             </form>
@@ -276,7 +268,7 @@ const RoomManagement: React.FC<Props> = ({ onAction, onOpenPaymentModal }) => {
                 {ROOM_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               <div className="flex gap-4 pt-6">
-                <button type="button" onClick={() => { setShowBulkModal(false); onAction("Success: Discarded bulk changes"); }} className="flex-1 border py-3 rounded-xl font-bold text-slate-500">Cancel</button>
+                <button type="button" onClick={() => setShowBulkModal(false)} className="flex-1 border py-3 rounded-xl font-bold text-slate-500">Cancel</button>
                 <button type="submit" className="flex-1 bg-amber-500 text-white py-3 rounded-xl font-bold">Apply Bulk Changes</button>
               </div>
             </form>

@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { db } from '../services/storage';
 import { Room, RoomStatus, SystemStats, User, UserRole } from '../types';
 import { CURRENCY } from '../constants';
@@ -7,7 +7,6 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<SystemStats | null>(null);
-  const [rooms, setRooms] = useState<Room[]>([]);
   const [reminders, setReminders] = useState<Room[]>([]);
   const [overdueRooms, setOverdueRooms] = useState<Room[]>([]);
   const [employees, setEmployees] = useState<User[]>([]);
@@ -16,14 +15,13 @@ const Dashboard: React.FC = () => {
   const user = db.getCurrentUser();
   const isAdmin = user?.role === UserRole.ADMIN;
 
-  useEffect(() => {
+  const refreshData = useCallback(() => {
     const allRooms = db.getRooms();
     const emps = db.getEmployees();
     const settings = db.getSettings();
     
     setEmployees([...emps].sort((a, b) => b.coins - a.coins));
     setShowLeaderboard(settings.showLeaderboard);
-    setRooms(allRooms);
     
     const revenue = allRooms.filter(r => r.status === RoomStatus.OCCUPIED).reduce((acc, r) => acc + r.monthlyRent, 0);
     const expenses = allRooms.reduce((acc, r) => acc + (r.monthlyExpenses || 0), 0);
@@ -49,11 +47,14 @@ const Dashboard: React.FC = () => {
     setOverdueRooms(overdue);
   }, []);
 
-  const toggleLeaderboard = () => {
-    const newValue = !showLeaderboard;
-    setShowLeaderboard(newValue);
-    db.updateSettings({ showLeaderboard: newValue });
-  };
+  useEffect(() => {
+    refreshData();
+
+    // Listen for database updates to keep stats live
+    const handleDbUpdate = () => refreshData();
+    window.addEventListener(db.UPDATE_EVENT as any, handleDbUpdate);
+    return () => window.removeEventListener(db.UPDATE_EVENT as any, handleDbUpdate);
+  }, [refreshData]);
 
   if (!stats) return <div className="p-8 text-center text-slate-400">Loading metrics...</div>;
 
